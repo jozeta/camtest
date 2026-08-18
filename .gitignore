@@ -1,0 +1,26 @@
+# Build output
+build/
+out/
+
+# Compiled binaries / intermediates (spike tools are compiled ad hoc, not via CMake)
+*.obj
+*.exe
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+
+# Per-machine runtime state (real local file paths, not meant to be shared)
+camtest.cfg
+probe_diag.txt
+*_log.txt
+
+# Visual Studio / CMake tooling
+.vs/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+*.ninja
+.ninja_log
+.ninja_deps
