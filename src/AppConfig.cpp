@@ -81,6 +81,20 @@ AppConfig AppConfig::Load() {
                 try { idx = std::stoi(idxStr); } catch (...) {}
                 if (idx >= 0 && idx < AppConfig::kMaxCameras && field == "image") {
                     cfg.imagePaths[idx] = Utf8ToWide(value);
+                } else if (idx >= 0 && idx < AppConfig::kMaxCameras && field == "name") {
+                    cfg.cameraNames[idx] = Utf8ToWide(value);
+                } else if (idx >= 0 && idx < AppConfig::kMaxCameras && field == "width") {
+                    try { cfg.frameWidth[idx] = (UINT32)std::stoul(value); } catch (...) {}
+                } else if (idx >= 0 && idx < AppConfig::kMaxCameras && field == "height") {
+                    try { cfg.frameHeight[idx] = (UINT32)std::stoul(value); } catch (...) {}
+                } else if (idx >= 0 && idx < AppConfig::kMaxCameras && field == "slideshow") {
+                    cfg.slideshowEnabled[idx] = (value == "1");
+                } else if (idx >= 0 && idx < AppConfig::kMaxCameras && field == "slideshowFolder") {
+                    cfg.slideshowFolders[idx] = Utf8ToWide(value);
+                } else if (idx >= 0 && idx < AppConfig::kMaxCameras && field == "slideshowInterval") {
+                    int sec = 5;
+                    try { sec = std::stoi(value); } catch (...) {}
+                    cfg.slideshowIntervalSec[idx] = (sec >= 1) ? sec : 5;
                 }
             }
         } else if (key == "registered") {
@@ -104,6 +118,12 @@ bool AppConfig::Save() const {
         file << "count=" << cameraCount << "\n";
         for (int i = 0; i < kMaxCameras; ++i) {
             file << "cam" << i << ".image=" << WideToUtf8(imagePaths[i]) << "\n";
+            file << "cam" << i << ".name=" << WideToUtf8(cameraNames[i]) << "\n";
+            file << "cam" << i << ".width=" << frameWidth[i] << "\n";
+            file << "cam" << i << ".height=" << frameHeight[i] << "\n";
+            file << "cam" << i << ".slideshow=" << (slideshowEnabled[i] ? "1" : "0") << "\n";
+            file << "cam" << i << ".slideshowFolder=" << WideToUtf8(slideshowFolders[i]) << "\n";
+            file << "cam" << i << ".slideshowInterval=" << slideshowIntervalSec[i] << "\n";
         }
         file << "registered=" << (registered ? "1" : "0") << "\n";
         file << "registeredExePath=" << WideToUtf8(registeredExePath) << "\n";

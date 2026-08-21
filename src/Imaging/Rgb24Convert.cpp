@@ -2,10 +2,8 @@
 
 namespace Rgb24Convert {
 
-std::shared_ptr<FrameBuffer> FromBGRA32Canvas(const std::vector<uint8_t>& canvasBGRA) {
-    auto fb = std::make_shared<FrameBuffer>();
-    const UINT32 w = FrameBuffer::kWidth;
-    const UINT32 h = FrameBuffer::kHeight;
+std::shared_ptr<FrameBuffer> FromBGRA32Canvas(const std::vector<uint8_t>& canvasBGRA, UINT32 w, UINT32 h) {
+    auto fb = std::make_shared<FrameBuffer>(w, h);
     const size_t srcStride = size_t(w) * 4;
 
     if (canvasBGRA.size() < srcStride * h) {
@@ -16,7 +14,7 @@ std::shared_ptr<FrameBuffer> FromBGRA32Canvas(const std::vector<uint8_t>& canvas
         const uint8_t* srcRow = canvasBGRA.data() + size_t(y) * srcStride;
         // Row y of the (top-down) source maps to row (h-1-y) of the
         // bottom-up destination.
-        uint8_t* dstRow = fb->bgr24.data() + size_t(h - 1 - y) * FrameBuffer::kStride;
+        uint8_t* dstRow = fb->bgr24.data() + size_t(h - 1 - y) * fb->Stride();
         for (UINT32 x = 0; x < w; ++x) {
             const uint8_t* srcPx = srcRow + size_t(x) * 4;
             uint8_t* dstPx = dstRow + size_t(x) * 3;

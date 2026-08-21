@@ -150,6 +150,14 @@ void NamedPipeServer::AcceptorThreadProc(ClientSlot* slot) {
     }
 }
 
+int NamedPipeServer::GetConnectedClientCount() const {
+    int count = 0;
+    for (const auto& slot : clients_) {
+        if (slot->connected.load()) ++count;
+    }
+    return count;
+}
+
 void NamedPipeServer::Stop() {
     stopping_.store(true);
     if (stopEvent_) SetEvent(stopEvent_);

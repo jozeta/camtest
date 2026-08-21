@@ -1,4 +1,5 @@
 #pragma once
+#include <windows.h>
 #include <string>
 #include <array>
 
@@ -10,6 +11,26 @@ struct AppConfig {
 
     int cameraCount = 1;
     std::array<std::wstring, kMaxCameras> imagePaths;
+    // Empty means "use the default (VCamSlots::FriendlyNameForSlot)". Only
+    // takes effect for other applications after (re)registering, since the
+    // name is what gets published as the DirectShow filter's friendly name.
+    std::array<std::wstring, kMaxCameras> cameraNames;
+
+    // 0 means "use the default (FrameBuffer::kDefaultWidth/Height)". Like
+    // cameraNames, only takes effect for other applications after
+    // (re)registering -- the pin reads this from the registry at
+    // construction time, synchronously, before it can reach the GUI over
+    // the pipe (see CamtestOutputPin.cpp).
+    std::array<UINT32, kMaxCameras> frameWidth{};
+    std::array<UINT32, kMaxCameras> frameHeight{};
+
+    // Slideshow / cycling mode: when enabled for a slot, Start scans
+    // slideshowFolders[i] for images and cycles through them every
+    // slideshowIntervalSec[i] seconds instead of holding imagePaths[i].
+    std::array<bool, kMaxCameras> slideshowEnabled{};
+    std::array<std::wstring, kMaxCameras> slideshowFolders;
+    std::array<int, kMaxCameras> slideshowIntervalSec{5, 5, 5, 5};
+
     bool registered = false;
     std::wstring registeredExePath;
 

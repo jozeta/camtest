@@ -7,13 +7,14 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
-// The single output pin of a camera slot's filter. Pushes a static image
-// (received over the slot's named pipe, decoded/letterboxed/converted
-// elsewhere and handed to us as an immutable FrameBuffer) as a fixed
-// 1920x1080@30fps RGB24 stream, following the classic CSourceStream
-// push-source pattern (validated end-to-end via a throwaway spike before
-// this was written).
+// The single output pin of a camera slot's filter. Pushes a static image or
+// an animated GIF's frame sequence (received over the slot's named pipe as
+// a path, decoded/letterboxed/converted elsewhere and handed to us as one
+// or more immutable FrameBuffers) as a fixed-resolution@30fps RGB24
+// stream, following the classic CSourceStream push-source pattern
+// (validated end-to-end via a throwaway spike before this was written).
 class CamtestOutputPin : public CSourceStream, public IKsPropertySet, public IAMStreamConfig {
 public:
     CamtestOutputPin(int slotIndex, HRESULT* phr, CSource* pFilter);
@@ -52,8 +53,21 @@ private:
     int slotIndex_;
     std::unique_ptr<NamedPipeClient> pipeClient_;
 
+    // Fixed for this pin's lifetime, read once at construction from the
+    // registry (written by VCamEngine::RegisterAllSlots) -- see the
+    // per-slot-resolution design note in CamtestOutputPin.cpp.
+    UINT32 width_ = FrameBuffer::kDefaultWidth;
+    UINT32 height_ = FrameBuffer::kDefaultHeight;
+
+    struct AnimFrame {
+        std::shared_ptr<FrameBuffer> frame;
+        DWORD delayMs;
+    };
+
     std::mutex frameMutex_;
-    std::shared_ptr<FrameBuffer> currentFrame_;
+    std::vector<AnimFrame> frames_;      // always >=1 once loaded; size==1 is the static-image case
+    size_t animIndex_ = 0;
+    ULONGLONG nextAnimAdvanceTick_ = 0;  // GetTickCount64() deadline; only meaningful when frames_.size() > 1
     std::wstring lastLoadedPath_;
 
     LONGLONG frameIndex_ = 0;

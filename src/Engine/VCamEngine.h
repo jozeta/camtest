@@ -29,6 +29,12 @@ public:
     void StopSlot(int slot);
     bool IsSlotRunning(int slot) const { return servers_[slot] != nullptr; }
 
+    // Number of consumer processes currently holding this slot's camera
+    // open. 0 if the slot isn't running.
+    int GetConnectedClientCount(int slot) const {
+        return servers_[slot] ? servers_[slot]->GetConnectedClientCount() : 0;
+    }
+
     // Live image swap: no-op if the slot isn't currently running.
     void SetImagePath(int slot, const std::wstring& imagePath);
 

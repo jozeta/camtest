@@ -1,5 +1,6 @@
 #include "VCamEngine.h"
 #include "../AppConfig.h"
+#include "../Imaging/FrameBuffer.h"
 #include <dshow.h>
 #include <wrl/client.h>
 #include <sstream>
@@ -15,7 +16,8 @@ std::wstring ClsidToString(const CLSID& clsid) {
     return buf;
 }
 
-bool RegisterSlotComClass(int slot, const std::wstring& dllPath, std::wstring& outError) {
+bool RegisterSlotComClass(int slot, const std::wstring& dllPath, const std::wstring& friendlyName,
+                           UINT32 frameWidth, UINT32 frameHeight, std::wstring& outError) {
     std::wstring clsidStr = ClsidToString(VCamSlots::ClsidForSlot(slot));
     std::wstring keyPath = L"Software\\Classes\\CLSID\\" + clsidStr + L"\\InProcServer32";
 
@@ -31,11 +33,29 @@ bool RegisterSlotComClass(int slot, const std::wstring& dllPath, std::wstring& o
     std::wstring clsidKeyPath = L"Software\\Classes\\CLSID\\" + clsidStr;
     HKEY hKey2;
     if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, clsidKeyPath.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, &hKey2, nullptr) == ERROR_SUCCESS) {
-        std::wstring friendly = VCamSlots::FriendlyNameForSlot(slot);
-        RegSetValueExW(hKey2, nullptr, 0, REG_SZ, (const BYTE*)friendly.c_str(), (DWORD)((friendly.size() + 1) * sizeof(wchar_t)));
+        RegSetValueExW(hKey2, nullptr, 0, REG_SZ, (const BYTE*)friendlyName.c_str(), (DWORD)((friendlyName.size() + 1) * sizeof(wchar_t)));
+        // Read synchronously by CamtestOutputPin's constructor -- see the
+        // per-slot-resolution design note there. Written here (rather than
+        // sent live over the pipe) precisely because DirectShow queries
+        // GetMediaType before the pipe connection can possibly exist.
+        DWORD w = frameWidth, h = frameHeight;
+        RegSetValueExW(hKey2, L"FrameWidth", 0, REG_DWORD, (const BYTE*)&w, sizeof(w));
+        RegSetValueExW(hKey2, L"FrameHeight", 0, REG_DWORD, (const BYTE*)&h, sizeof(h));
         RegCloseKey(hKey2);
     }
     return true;
+}
+
+std::wstring EffectiveNameForSlot(const AppConfig& cfg, int slot) {
+    return cfg.cameraNames[slot].empty() ? VCamSlots::FriendlyNameForSlot(slot) : cfg.cameraNames[slot];
+}
+
+UINT32 EffectiveWidthForSlot(const AppConfig& cfg, int slot) {
+    return cfg.frameWidth[slot] != 0 ? cfg.frameWidth[slot] : FrameBuffer::kDefaultWidth;
+}
+
+UINT32 EffectiveHeightForSlot(const AppConfig& cfg, int slot) {
+    return cfg.frameHeight[slot] != 0 ? cfg.frameHeight[slot] : FrameBuffer::kDefaultHeight;
 }
 
 void UnregisterSlotComClass(int slot) {
@@ -59,8 +79,13 @@ bool VCamEngine::RegisterAllSlots(std::wstring& outError) {
         return false;
     }
 
+    AppConfig cfg = AppConfig::Load();
+
     for (int slot = 0; slot < VCamSlots::kMaxSlots; ++slot) {
-        if (!RegisterSlotComClass(slot, dllPath, outError)) return false;
+        if (!RegisterSlotComClass(slot, dllPath, EffectiveNameForSlot(cfg, slot),
+                                   EffectiveWidthForSlot(cfg, slot), EffectiveHeightForSlot(cfg, slot), outError)) {
+            return false;
+        }
     }
 
     HRESULT coHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -96,7 +121,7 @@ bool VCamEngine::RegisterAllSlots(std::wstring& outError) {
         rf2.cPins = 1;
         rf2.rgPins = &regPin;
 
-        std::wstring friendly = VCamSlots::FriendlyNameForSlot(slot);
+        std::wstring friendly = EffectiveNameForSlot(cfg, slot);
         hr = pFM2->RegisterFilter(VCamSlots::ClsidForSlot(slot), friendly.c_str(), nullptr,
                                     &CLSID_VideoInputDeviceCategory, nullptr, &rf2);
         if (FAILED(hr)) {
@@ -109,7 +134,6 @@ bool VCamEngine::RegisterAllSlots(std::wstring& outError) {
 
     if (comInit) CoUninitialize();
 
-    AppConfig cfg = AppConfig::Load();
     cfg.registered = true;
     cfg.registeredExePath = dllPath;
     cfg.Save();

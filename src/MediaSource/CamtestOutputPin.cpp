@@ -2,9 +2,11 @@
 #include "../Imaging/ImageLoader.h"
 #include "../Imaging/Letterbox.h"
 #include "../Imaging/Rgb24Convert.h"
+#include "../VCamSlots.h"
 #include <initguid.h>
 #include <ks.h>
 #include <ksmedia.h>
+#include <objbase.h>
 #include <algorithm>
 #include <string>
 
@@ -12,11 +14,34 @@ namespace {
 std::wstring PipeNameForSlot(int slot) {
     return L"\\\\.\\pipe\\camtest_cam" + std::to_wstring(slot);
 }
+
+// Reads a per-slot DWORD written under the slot's CLSID key by
+// VCamEngine::RegisterAllSlots (e.g. "FrameWidth"/"FrameHeight"). This has
+// to be synchronous and IPC-free: DirectShow calls GetMediaType on this pin
+// immediately after CoCreateInstance, well before the pipe to the GUI
+// process (which may not even be running) has a chance to connect.
+UINT32 ReadSlotRegistryDword(const CLSID& clsid, const wchar_t* valueName, UINT32 defaultValue) {
+    wchar_t clsidStr[64];
+    StringFromGUID2(clsid, clsidStr, 64);
+    std::wstring keyPath = L"Software\\Classes\\CLSID\\" + std::wstring(clsidStr);
+
+    DWORD value = 0;
+    DWORD size = sizeof(value);
+    LONG result = RegGetValueW(HKEY_LOCAL_MACHINE, keyPath.c_str(), valueName,
+                                RRF_RT_REG_DWORD, nullptr, &value, &size);
+    return (result == ERROR_SUCCESS) ? (UINT32)value : defaultValue;
+}
 }
 
 CamtestOutputPin::CamtestOutputPin(int slotIndex, HRESULT* phr, CSource* pFilter)
     : CSourceStream(L"CamtestOutputPin", phr, pFilter, L"Out"), slotIndex_(slotIndex) {
-    currentFrame_ = FrameBuffer::MakeBlack();
+    const CLSID& clsid = VCamSlots::ClsidForSlot(slotIndex_);
+    width_ = ReadSlotRegistryDword(clsid, L"FrameWidth", FrameBuffer::kDefaultWidth);
+    height_ = ReadSlotRegistryDword(clsid, L"FrameHeight", FrameBuffer::kDefaultHeight);
+    if (width_ == 0) width_ = FrameBuffer::kDefaultWidth;
+    if (height_ == 0) height_ = FrameBuffer::kDefaultHeight;
+
+    frames_.push_back({FrameBuffer::MakeBlack(width_, height_), 100});
 
     pipeClient_ = std::make_unique<NamedPipeClient>(
         PipeNameForSlot(slotIndex_),
@@ -44,23 +69,28 @@ void CamtestOutputPin::OnImagePathReceived(const std::wstring& path) {
         if (path == lastLoadedPath_) return; // heartbeat re-send of an already-loaded path
     }
 
-    std::shared_ptr<FrameBuffer> newFrame;
+    std::vector<AnimFrame> newFrames;
     if (path.empty()) {
-        newFrame = FrameBuffer::MakeBlack();
+        newFrames.push_back({FrameBuffer::MakeBlack(width_, height_), 100});
     } else {
-        std::vector<uint8_t> pixels;
-        UINT w = 0, h = 0;
-        if (ImageLoader::LoadBGRA32(path, pixels, w, h)) {
-            std::vector<uint8_t> canvas;
-            Letterbox::ComposeCanvas(pixels, w, h, canvas);
-            newFrame = Rgb24Convert::FromBGRA32Canvas(canvas);
-        } else {
-            newFrame = FrameBuffer::MakeBlack();
+        std::vector<ImageLoader::DecodedFrame> decoded;
+        UINT canvasW = 0, canvasH = 0;
+        if (ImageLoader::LoadAnimatedFrames(path, decoded, canvasW, canvasH)) {
+            for (auto& df : decoded) {
+                std::vector<uint8_t> canvas;
+                Letterbox::ComposeCanvas(df.bgra, canvasW, canvasH, width_, height_, canvas);
+                newFrames.push_back({Rgb24Convert::FromBGRA32Canvas(canvas, width_, height_), df.delayMs});
+            }
+        }
+        if (newFrames.empty()) {
+            newFrames.push_back({FrameBuffer::MakeBlack(width_, height_), 100});
         }
     }
 
     std::lock_guard<std::mutex> lock(frameMutex_);
-    currentFrame_ = newFrame;
+    frames_ = std::move(newFrames);
+    animIndex_ = 0;
+    nextAnimAdvanceTick_ = GetTickCount64() + frames_[0].delayMs;
     lastLoadedPath_ = path;
 }
 
@@ -68,7 +98,18 @@ HRESULT CamtestOutputPin::FillBuffer(IMediaSample* pSample) {
     std::shared_ptr<FrameBuffer> frame;
     {
         std::lock_guard<std::mutex> lock(frameMutex_);
-        frame = currentFrame_;
+        if (frames_.size() > 1) {
+            ULONGLONG now = GetTickCount64();
+            // A while loop (not if) so a consumer that stalls for longer
+            // than one frame's delay still lands on the frame it should be
+            // showing right now, rather than crawling through every frame
+            // it missed one FillBuffer call at a time.
+            while (now >= nextAnimAdvanceTick_) {
+                animIndex_ = (animIndex_ + 1) % frames_.size();
+                nextAnimAdvanceTick_ += frames_[animIndex_].delayMs;
+            }
+        }
+        frame = frames_[animIndex_].frame;
     }
 
     BYTE* pData = nullptr;
@@ -94,18 +135,19 @@ HRESULT CamtestOutputPin::GetMediaType(CMediaType* pmt) {
     ZeroMemory(vih, sizeof(VIDEOINFOHEADER));
     vih->AvgTimePerFrame = kFrameDuration;
     vih->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    vih->bmiHeader.biWidth = FrameBuffer::kWidth;
-    vih->bmiHeader.biHeight = FrameBuffer::kHeight; // positive = bottom-up, matches FrameBuffer layout
+    vih->bmiHeader.biWidth = (LONG)width_;
+    vih->bmiHeader.biHeight = (LONG)height_; // positive = bottom-up, matches FrameBuffer layout
     vih->bmiHeader.biPlanes = 1;
     vih->bmiHeader.biBitCount = 24;
     vih->bmiHeader.biCompression = BI_RGB;
-    vih->bmiHeader.biSizeImage = (DWORD)FrameBuffer::kTotalSize;
+    DWORD frameSize = (DWORD)(size_t(width_) * FrameBuffer::kBytesPerPixel * height_);
+    vih->bmiHeader.biSizeImage = frameSize;
 
     pmt->SetType(&MEDIATYPE_Video);
     pmt->SetSubtype(&MEDIASUBTYPE_RGB24);
     pmt->SetFormatType(&FORMAT_VideoInfo);
     pmt->SetTemporalCompression(FALSE);
-    pmt->SetSampleSize((ULONG)FrameBuffer::kTotalSize);
+    pmt->SetSampleSize(frameSize);
     return S_OK;
 }
 
@@ -115,15 +157,15 @@ HRESULT CamtestOutputPin::CheckMediaType(const CMediaType* pmt) {
     if (*pmt->FormatType() != FORMAT_VideoInfo) return S_FALSE;
     VIDEOINFOHEADER* vih = (VIDEOINFOHEADER*)pmt->Format();
     if (!vih) return S_FALSE;
-    if (vih->bmiHeader.biWidth != (LONG)FrameBuffer::kWidth) return S_FALSE;
-    if (abs(vih->bmiHeader.biHeight) != (LONG)FrameBuffer::kHeight) return S_FALSE;
+    if (vih->bmiHeader.biWidth != (LONG)width_) return S_FALSE;
+    if (abs(vih->bmiHeader.biHeight) != (LONG)height_) return S_FALSE;
     if (vih->bmiHeader.biBitCount != 24) return S_FALSE;
     return S_OK;
 }
 
 HRESULT CamtestOutputPin::DecideBufferSize(IMemAllocator* pAlloc, ALLOCATOR_PROPERTIES* pProps) {
     pProps->cBuffers = 2;
-    pProps->cbBuffer = (long)FrameBuffer::kTotalSize;
+    pProps->cbBuffer = (long)(size_t(width_) * FrameBuffer::kBytesPerPixel * height_);
     ALLOCATOR_PROPERTIES actual;
     HRESULT hr = pAlloc->SetProperties(pProps, &actual);
     if (FAILED(hr)) return hr;
@@ -186,8 +228,8 @@ HRESULT STDMETHODCALLTYPE CamtestOutputPin::GetStreamCaps(int iIndex, AM_MEDIA_T
     ZeroMemory(&caps, sizeof(caps));
     caps.guid = FORMAT_VideoInfo;
     caps.VideoStandard = AnalogVideo_None;
-    caps.InputSize.cx = FrameBuffer::kWidth;
-    caps.InputSize.cy = FrameBuffer::kHeight;
+    caps.InputSize.cx = (LONG)width_;
+    caps.InputSize.cy = (LONG)height_;
     caps.MinCroppingSize = caps.MaxCroppingSize = caps.InputSize;
     caps.CropGranularityX = caps.CropGranularityY = 1;
     caps.CropAlignX = caps.CropAlignY = 0;
@@ -196,7 +238,8 @@ HRESULT STDMETHODCALLTYPE CamtestOutputPin::GetStreamCaps(int iIndex, AM_MEDIA_T
     caps.StretchTapsX = caps.StretchTapsY = 0;
     caps.ShrinkTapsX = caps.ShrinkTapsY = 0;
     caps.MinFrameInterval = caps.MaxFrameInterval = kFrameDuration;
-    caps.MinBitsPerSecond = caps.MaxBitsPerSecond = (LONG)(FrameBuffer::kTotalSize * 8 * 30);
+    size_t frameSize = size_t(width_) * FrameBuffer::kBytesPerPixel * height_;
+    caps.MinBitsPerSecond = caps.MaxBitsPerSecond = (LONG)(frameSize * 8 * 30);
     memcpy(pSCC, &caps, sizeof(caps));
     return S_OK;
 }

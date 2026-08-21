@@ -3,7 +3,7 @@
 
 1 24 "camtest.manifest"
 
-IDD_MAIN DIALOGEX 0, 0, 320, 210
+IDD_MAIN DIALOGEX 0, 0, 350, 275
 STYLE DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
 CAPTION "camtest - Fake Webcam"
 FONT 9, "Segoe UI"
@@ -11,30 +11,60 @@ BEGIN
     LTEXT           "Number of cameras:", -1, 10, 10, 90, 10
     COMBOBOX        IDC_COUNT_COMBO, 105, 8, 40, 60, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
 
-    LTEXT           "Camera 1", -1, 10, 30, 45, 10
-    LTEXT           "(not set)", IDC_PATH_BASE+0, 60, 30, 170, 10, SS_PATHELLIPSIS
-    PUSHBUTTON      "Browse...", IDC_BROWSE_BASE+0, 235, 28, 50, 14
-    LTEXT           "", IDC_ROWSTATUS_BASE+0, 290, 30, 24, 10
+    CONTROL         "", IDC_THUMB_BASE+0, "STATIC", SS_BITMAP | SS_CENTERIMAGE | SS_SUNKEN, 10, 34, 50, 30
+    EDITTEXT        IDC_NAME_BASE+0, 66, 34, 100, 12, ES_AUTOHSCROLL
+    LTEXT           "(not set)", IDC_PATH_BASE+0, 66, 49, 163, 10, SS_PATHELLIPSIS
+    PUSHBUTTON      "Browse...", IDC_BROWSE_BASE+0, 234, 34, 55, 14
+    PUSHBUTTON      "Settings...", IDC_SETTINGS_BASE+0, 234, 50, 55, 13
+    LTEXT           "", IDC_ROWSTATUS_BASE+0, 294, 41, 30, 10
 
-    LTEXT           "Camera 2", -1, 10, 50, 45, 10
-    LTEXT           "(not set)", IDC_PATH_BASE+1, 60, 50, 170, 10, SS_PATHELLIPSIS
-    PUSHBUTTON      "Browse...", IDC_BROWSE_BASE+1, 235, 48, 50, 14
-    LTEXT           "", IDC_ROWSTATUS_BASE+1, 290, 50, 24, 10
+    CONTROL         "", IDC_THUMB_BASE+1, "STATIC", SS_BITMAP | SS_CENTERIMAGE | SS_SUNKEN, 10, 74, 50, 30
+    EDITTEXT        IDC_NAME_BASE+1, 66, 74, 100, 12, ES_AUTOHSCROLL
+    LTEXT           "(not set)", IDC_PATH_BASE+1, 66, 89, 163, 10, SS_PATHELLIPSIS
+    PUSHBUTTON      "Browse...", IDC_BROWSE_BASE+1, 234, 74, 55, 14
+    PUSHBUTTON      "Settings...", IDC_SETTINGS_BASE+1, 234, 90, 55, 13
+    LTEXT           "", IDC_ROWSTATUS_BASE+1, 294, 81, 30, 10
 
-    LTEXT           "Camera 3", -1, 10, 70, 45, 10
-    LTEXT           "(not set)", IDC_PATH_BASE+2, 60, 70, 170, 10, SS_PATHELLIPSIS
-    PUSHBUTTON      "Browse...", IDC_BROWSE_BASE+2, 235, 68, 50, 14
-    LTEXT           "", IDC_ROWSTATUS_BASE+2, 290, 70, 24, 10
+    CONTROL         "", IDC_THUMB_BASE+2, "STATIC", SS_BITMAP | SS_CENTERIMAGE | SS_SUNKEN, 10, 114, 50, 30
+    EDITTEXT        IDC_NAME_BASE+2, 66, 114, 100, 12, ES_AUTOHSCROLL
+    LTEXT           "(not set)", IDC_PATH_BASE+2, 66, 129, 163, 10, SS_PATHELLIPSIS
+    PUSHBUTTON      "Browse...", IDC_BROWSE_BASE+2, 234, 114, 55, 14
+    PUSHBUTTON      "Settings...", IDC_SETTINGS_BASE+2, 234, 130, 55, 13
+    LTEXT           "", IDC_ROWSTATUS_BASE+2, 294, 121, 30, 10
 
-    LTEXT           "Camera 4", -1, 10, 90, 45, 10
-    LTEXT           "(not set)", IDC_PATH_BASE+3, 60, 90, 170, 10, SS_PATHELLIPSIS
-    PUSHBUTTON      "Browse...", IDC_BROWSE_BASE+3, 235, 88, 50, 14
-    LTEXT           "", IDC_ROWSTATUS_BASE+3, 290, 90, 24, 10
+    CONTROL         "", IDC_THUMB_BASE+3, "STATIC", SS_BITMAP | SS_CENTERIMAGE | SS_SUNKEN, 10, 154, 50, 30
+    EDITTEXT        IDC_NAME_BASE+3, 66, 154, 100, 12, ES_AUTOHSCROLL
+    LTEXT           "(not set)", IDC_PATH_BASE+3, 66, 169, 163, 10, SS_PATHELLIPSIS
+    PUSHBUTTON      "Browse...", IDC_BROWSE_BASE+3, 234, 154, 55, 14
+    PUSHBUTTON      "Settings...", IDC_SETTINGS_BASE+3, 234, 170, 55, 13
+    LTEXT           "", IDC_ROWSTATUS_BASE+3, 294, 161, 30, 10
 
-    PUSHBUTTON      "Start", IDC_START, 10, 115, 60, 16
-    PUSHBUTTON      "Stop", IDC_STOP, 75, 115, 60, 16
+    PUSHBUTTON      "Start", IDC_START, 10, 194, 60, 16
+    PUSHBUTTON      "Stop", IDC_STOP, 75, 194, 60, 16
 
-    LTEXT           "Not registered yet.", IDC_STATUS, 10, 140, 300, 20
-    PUSHBUTTON      "Register (admin, one-time)", IDC_REGISTER, 10, 165, 140, 16
-    PUSHBUTTON      "Unregister", IDC_UNREGISTER, 155, 165, 80, 16
+    LTEXT           "Not registered yet.", IDC_STATUS, 10, 220, 330, 20
+    PUSHBUTTON      "Register (admin, one-time)", IDC_REGISTER, 10, 245, 140, 16
+    PUSHBUTTON      "Unregister", IDC_UNREGISTER, 155, 245, 80, 16
+END
+
+IDD_CAMSETTINGS DIALOGEX 0, 0, 240, 130
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Camera Settings"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT           "Resolution:", -1, 10, 12, 60, 10
+    COMBOBOX        IDC_SET_RES_COMBO, 75, 10, 130, 80, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+
+    CONTROL         "Slideshow: cycle through a folder", IDC_SET_SLIDESHOW_ENABLE, "Button",
+                    BS_AUTOCHECKBOX | WS_TABSTOP, 10, 34, 200, 10
+
+    LTEXT           "Folder:", -1, 10, 51, 35, 10
+    EDITTEXT        IDC_SET_SLIDESHOW_FOLDER, 48, 49, 134, 12, ES_AUTOHSCROLL
+    PUSHBUTTON      "Browse...", IDC_SET_SLIDESHOW_BROWSE, 184, 48, 48, 14
+
+    LTEXT           "Interval (sec):", -1, 10, 71, 60, 10
+    EDITTEXT        IDC_SET_SLIDESHOW_INTERVAL, 75, 69, 40, 12, ES_AUTOHSCROLL | ES_NUMBER
+
+    DEFPUSHBUTTON   "OK", IDOK, 100, 105, 60, 16
+    PUSHBUTTON      "Cancel", IDCANCEL, 165, 105, 60, 16
 END

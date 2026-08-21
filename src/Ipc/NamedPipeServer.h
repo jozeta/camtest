@@ -46,6 +46,11 @@ public:
 
     const std::wstring& GetPipeName() const { return pipeName_; }
 
+    // Number of clients currently connected (i.e. consumer processes
+    // actively holding this camera open). Cheap snapshot -- for UI display,
+    // not synchronized with any particular SetImagePath call.
+    int GetConnectedClientCount() const;
+
 private:
     struct ClientSlot {
         HANDLE pipe = INVALID_HANDLE_VALUE;

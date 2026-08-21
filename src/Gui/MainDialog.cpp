@@ -1,9 +1,21 @@
 #include "MainDialog.h"
 #include "resource.h"
+#include "CameraSettingsDialog.h"
+#include "../Imaging/ImageLoader.h"
+#include "../Imaging/Letterbox.h"
 #include <commdlg.h>
 #include <shellapi.h>
 #include <string>
 #include <array>
+#include <algorithm>
+#include <filesystem>
+
+namespace fs = std::filesystem;
+
+namespace {
+constexpr int kThumbW = 50;
+constexpr int kThumbH = 30;
+}
 
 namespace {
 
@@ -13,6 +25,26 @@ MainDialog* GetThis(HWND hDlg) {
 
 std::wstring TruncatedOrPlaceholder(const std::wstring& path) {
     return path.empty() ? L"(not set)" : path;
+}
+
+// Sorted list of *.png/*.jpg/*.jpeg/*.gif files directly inside `folder`
+// (non-recursive). Empty on a missing/unreadable/empty folder.
+std::vector<std::wstring> ScanImageFolder(const std::wstring& folder) {
+    std::vector<std::wstring> files;
+    if (folder.empty()) return files;
+
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(folder, ec)) {
+        if (ec) break;
+        if (!entry.is_regular_file(ec)) continue;
+        std::wstring ext = entry.path().extension().wstring();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c) { return (wchar_t)towlower(c); });
+        if (ext == L".png" || ext == L".jpg" || ext == L".jpeg" || ext == L".gif") {
+            files.push_back(entry.path().wstring());
+        }
+    }
+    std::sort(files.begin(), files.end());
+    return files;
 }
 
 // Relaunches this exe elevated with the given argument, waits for it to
@@ -42,12 +74,14 @@ int RunElevatedAndWait(const wchar_t* arg) {
 
 } // namespace
 
-int MainDialog::RunModal(HINSTANCE hInstance) {
+int MainDialog::RunModal(HINSTANCE hInstance, bool autoStart) {
     MainDialog dlg;
+    dlg.hInstance_ = hInstance;
     HWND hDlg = CreateDialogParamW(hInstance, MAKEINTRESOURCEW(IDD_MAIN), nullptr, DlgProc, (LPARAM)&dlg);
     if (!hDlg) return 1;
 
     ShowWindow(hDlg, SW_SHOW);
+    if (autoStart) dlg.OnStart(); // reuses Start's own validation/error message boxes
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
@@ -77,6 +111,10 @@ INT_PTR CALLBACK MainDialog::DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM 
             self->OnCountChanged();
         } else if (id >= IDC_BROWSE_BASE && id < IDC_BROWSE_BASE + VCamSlots::kMaxSlots) {
             self->OnBrowse(id - IDC_BROWSE_BASE);
+        } else if (id >= IDC_NAME_BASE && id < IDC_NAME_BASE + VCamSlots::kMaxSlots && code == EN_KILLFOCUS) {
+            self->OnNameChanged(id - IDC_NAME_BASE);
+        } else if (id >= IDC_SETTINGS_BASE && id < IDC_SETTINGS_BASE + VCamSlots::kMaxSlots) {
+            self->OnSettings(id - IDC_SETTINGS_BASE);
         } else if (id == IDC_START) {
             self->OnStart();
         } else if (id == IDC_STOP) {
@@ -88,15 +126,34 @@ INT_PTR CALLBACK MainDialog::DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM 
         }
         return TRUE;
     }
+    case WM_TIMER: {
+        auto* self = GetThis(hDlg);
+        if (self && wParam == MainDialog::kTickTimerId) {
+            self->RefreshRowStatuses();
+            self->AdvanceSlideshows();
+        }
+        return TRUE;
+    }
     case WM_CLOSE: {
         auto* self = GetThis(hDlg);
-        if (self) self->SaveConfig();
+        if (self) {
+            for (int i = 0; i < VCamSlots::kMaxSlots; ++i) self->SyncNameFromUi(i);
+            self->SaveConfig();
+        }
         DestroyWindow(hDlg);
         return TRUE;
     }
-    case WM_DESTROY:
+    case WM_DESTROY: {
+        auto* self = GetThis(hDlg);
+        if (self) {
+            for (HBITMAP bmp : self->thumbnailBitmaps_) {
+                if (bmp) DeleteObject(bmp);
+            }
+        }
+        KillTimer(hDlg, MainDialog::kTickTimerId);
         PostQuitMessage(0);
         return TRUE;
+    }
     }
     return FALSE;
 }
@@ -113,11 +170,17 @@ void MainDialog::OnInitDialog(HWND hDlg) {
     SendMessageW(combo, CB_SETCURSEL, config_.cameraCount - 1, 0);
 
     for (int i = 0; i < VCamSlots::kMaxSlots; ++i) {
-        SetDlgItemTextW(hDlg, IDC_PATH_BASE + i, TruncatedOrPlaceholder(config_.imagePaths[i]).c_str());
+        RefreshPathLabel(i);
+        std::wstring name = config_.cameraNames[i].empty() ? VCamSlots::FriendlyNameForSlot(i) : config_.cameraNames[i];
+        SetDlgItemTextW(hDlg, IDC_NAME_BASE + i, name.c_str());
+        // Slideshow slots don't have a representative image until Start
+        // scans the folder, so they start blank.
+        RefreshThumbnail(i, config_.slideshowEnabled[i] ? L"" : config_.imagePaths[i]);
     }
 
     RefreshRowVisibility();
     RefreshStatus();
+    SetTimer(hDlg, kTickTimerId, 1000, nullptr);
 }
 
 void MainDialog::OnCountChanged() {
@@ -134,6 +197,8 @@ void MainDialog::RefreshRowVisibility() {
         BOOL enable = (i < config_.cameraCount) ? TRUE : FALSE;
         EnableWindow(GetDlgItem(hDlg_, IDC_BROWSE_BASE + i), enable && !running_);
         EnableWindow(GetDlgItem(hDlg_, IDC_PATH_BASE + i), enable);
+        EnableWindow(GetDlgItem(hDlg_, IDC_NAME_BASE + i), enable);
+        EnableWindow(GetDlgItem(hDlg_, IDC_SETTINGS_BASE + i), enable && !running_);
     }
     EnableWindow(GetDlgItem(hDlg_, IDC_COUNT_COMBO), !running_);
 }
@@ -155,12 +220,138 @@ void MainDialog::OnBrowse(int slot) {
     if (!GetOpenFileNameW(&ofn)) return;
 
     config_.imagePaths[slot] = fileBuf;
-    SetDlgItemTextW(hDlg_, IDC_PATH_BASE + slot, fileBuf);
+    RefreshPathLabel(slot); // no-op display-wise if this slot's slideshow is enabled
+    if (!config_.slideshowEnabled[slot]) RefreshThumbnail(slot, config_.imagePaths[slot]);
     SaveConfig();
 
-    // Live swap if this slot is currently serving frames.
-    if (running_ && slot < config_.cameraCount) {
+    // Live swap if this slot is currently serving frames and isn't in
+    // slideshow mode (which owns the image while it's cycling).
+    if (running_ && slot < config_.cameraCount && !config_.slideshowEnabled[slot]) {
         engine_.SetImagePath(slot, config_.imagePaths[slot]);
+    }
+}
+
+void MainDialog::RefreshPathLabel(int slot) {
+    std::wstring text = config_.slideshowEnabled[slot]
+        ? L"(slideshow) " + TruncatedOrPlaceholder(config_.slideshowFolders[slot])
+        : TruncatedOrPlaceholder(config_.imagePaths[slot]);
+    SetDlgItemTextW(hDlg_, IDC_PATH_BASE + slot, text.c_str());
+}
+
+void MainDialog::UpdateSlideshowRowLabel(int slot) {
+    const auto& files = slideshowFiles_[slot];
+    if (files.empty() || slideshowIndex_[slot] >= files.size()) return;
+    std::wstring filename = fs::path(files[slideshowIndex_[slot]]).filename().wstring();
+    std::wstring text = filename + L" (" + std::to_wstring(slideshowIndex_[slot] + 1) +
+                         L"/" + std::to_wstring(files.size()) + L")";
+    SetDlgItemTextW(hDlg_, IDC_PATH_BASE + slot, text.c_str());
+}
+
+void MainDialog::RefreshThumbnail(int slot, const std::wstring& imagePath) {
+    std::vector<uint8_t> canvas;
+    bool ok = false;
+    if (!imagePath.empty()) {
+        std::vector<uint8_t> pixels;
+        UINT w = 0, h = 0;
+        if (ImageLoader::LoadBGRA32(imagePath, pixels, w, h)) { // first frame only -- a static preview
+            ok = Letterbox::ComposeCanvas(pixels, w, h, kThumbW, kThumbH, canvas);
+        }
+    }
+
+    HBITMAP newBitmap = nullptr;
+    if (ok) {
+        BITMAPINFO bmi{};
+        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth = kThumbW;
+        bmi.bmiHeader.biHeight = -kThumbH; // negative = top-down, matches ComposeCanvas's layout
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+
+        void* bits = nullptr;
+        newBitmap = CreateDIBSection(nullptr, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
+        if (newBitmap && bits) {
+            memcpy(bits, canvas.data(), canvas.size());
+        } else if (newBitmap) {
+            DeleteObject(newBitmap);
+            newBitmap = nullptr;
+        }
+    }
+
+    SendDlgItemMessageW(hDlg_, IDC_THUMB_BASE + slot, STM_SETIMAGE, IMAGE_BITMAP, (LPARAM)newBitmap);
+    if (thumbnailBitmaps_[slot]) DeleteObject(thumbnailBitmaps_[slot]); // STM_SETIMAGE doesn't take ownership
+    thumbnailBitmaps_[slot] = newBitmap;
+}
+
+void MainDialog::AdvanceSlideshows() {
+    if (!running_) return;
+    ULONGLONG now = GetTickCount64();
+    for (int i = 0; i < config_.cameraCount; ++i) {
+        if (!config_.slideshowEnabled[i] || slideshowFiles_[i].empty()) continue;
+        if (now < slideshowNextTick_[i]) continue;
+
+        slideshowIndex_[i] = (slideshowIndex_[i] + 1) % slideshowFiles_[i].size();
+        slideshowNextTick_[i] = now + (ULONGLONG)config_.slideshowIntervalSec[i] * 1000;
+        engine_.SetImagePath(i, slideshowFiles_[i][slideshowIndex_[i]]);
+        UpdateSlideshowRowLabel(i);
+        RefreshThumbnail(i, slideshowFiles_[i][slideshowIndex_[i]]);
+    }
+}
+
+bool MainDialog::SyncNameFromUi(int slot) {
+    wchar_t buf[128];
+    GetDlgItemTextW(hDlg_, IDC_NAME_BASE + slot, buf, 128);
+    std::wstring typed = buf;
+
+    std::wstring defaultName = VCamSlots::FriendlyNameForSlot(slot);
+    std::wstring name = typed.empty() ? defaultName : typed;
+    if (name != typed) {
+        SetDlgItemTextW(hDlg_, IDC_NAME_BASE + slot, name.c_str()); // don't allow a blank name
+    }
+
+    std::wstring previous = config_.cameraNames[slot].empty() ? defaultName : config_.cameraNames[slot];
+    if (name == previous) return false; // no actual change -- e.g. just tabbed through
+
+    config_.cameraNames[slot] = (name == defaultName) ? L"" : name;
+    return true;
+}
+
+void MainDialog::OnNameChanged(int slot) {
+    if (!SyncNameFromUi(slot)) return;
+    SaveConfig();
+
+    if (config_.registered) {
+        MessageBoxW(hDlg_, L"Camera name saved. Click \"Register\" again to update the name shown in other apps.",
+                    L"camtest", MB_OK | MB_ICONINFORMATION);
+    }
+}
+
+void MainDialog::OnSettings(int slot) {
+    CameraSettingsDialog::Result result;
+    if (!CameraSettingsDialog::Show(hDlg_, hInstance_, config_, slot, result)) return; // cancelled
+
+    bool resolutionChanged = (config_.frameWidth[slot] != result.frameWidth) || (config_.frameHeight[slot] != result.frameHeight);
+    bool slideshowChanged = (config_.slideshowEnabled[slot] != result.slideshowEnabled) ||
+                             (config_.slideshowFolders[slot] != result.slideshowFolder) ||
+                             (config_.slideshowIntervalSec[slot] != result.slideshowIntervalSec);
+    if (!resolutionChanged && !slideshowChanged) return;
+
+    config_.frameWidth[slot] = result.frameWidth;
+    config_.frameHeight[slot] = result.frameHeight;
+    config_.slideshowEnabled[slot] = result.slideshowEnabled;
+    config_.slideshowFolders[slot] = result.slideshowFolder;
+    config_.slideshowIntervalSec[slot] = result.slideshowIntervalSec;
+    SaveConfig();
+
+    if (!running_) {
+        RefreshPathLabel(slot); // reflect a slideshow on/off toggle immediately; while
+                                 // running the row already shows live cycling state
+        RefreshThumbnail(slot, config_.slideshowEnabled[slot] ? L"" : config_.imagePaths[slot]);
+    }
+
+    if (resolutionChanged && config_.registered) {
+        MessageBoxW(hDlg_, L"Resolution saved. Click \"Register\" again to update it for other apps.",
+                    L"camtest", MB_OK | MB_ICONINFORMATION);
     }
 }
 
@@ -168,7 +359,15 @@ void MainDialog::OnStart() {
     if (running_) return;
 
     for (int i = 0; i < config_.cameraCount; ++i) {
-        if (config_.imagePaths[i].empty()) {
+        if (config_.slideshowEnabled[i]) {
+            slideshowFiles_[i] = ScanImageFolder(config_.slideshowFolders[i]);
+            if (slideshowFiles_[i].empty()) {
+                MessageBoxW(hDlg_, (L"Slideshow folder for camera " + std::to_wstring(i + 1) +
+                                     L" has no images (.png/.jpg/.jpeg/.gif).").c_str(),
+                            L"camtest", MB_OK | MB_ICONWARNING);
+                return;
+            }
+        } else if (config_.imagePaths[i].empty()) {
             MessageBoxW(hDlg_, L"Pick an image for every active camera slot before starting.",
                         L"camtest", MB_OK | MB_ICONWARNING);
             return;
@@ -177,8 +376,16 @@ void MainDialog::OnStart() {
 
     int startedCount = 0;
     for (int i = 0; i < config_.cameraCount; ++i) {
-        if (engine_.StartSlot(i, config_.imagePaths[i])) {
+        bool slideshow = config_.slideshowEnabled[i];
+        std::wstring initialPath = slideshow ? slideshowFiles_[i][0] : config_.imagePaths[i];
+        if (engine_.StartSlot(i, initialPath)) {
             ++startedCount;
+            if (slideshow) {
+                slideshowIndex_[i] = 0;
+                slideshowNextTick_[i] = GetTickCount64() + (ULONGLONG)config_.slideshowIntervalSec[i] * 1000;
+                UpdateSlideshowRowLabel(i);
+                RefreshThumbnail(i, slideshowFiles_[i][0]);
+            }
         }
     }
 
@@ -201,6 +408,7 @@ void MainDialog::OnStop() {
     if (!running_) return;
     for (int i = 0; i < VCamSlots::kMaxSlots; ++i) {
         engine_.StopSlot(i);
+        RefreshPathLabel(i); // drop the "(3/12)" slideshow-cycling display, if any
     }
     running_ = false;
     RefreshRowVisibility();
@@ -235,6 +443,19 @@ void MainDialog::RefreshStatus() {
         status = L"Registered. Not currently running.";
     }
     SetDlgItemTextW(hDlg_, IDC_STATUS, status.c_str());
+}
+
+void MainDialog::RefreshRowStatuses() {
+    for (int i = 0; i < VCamSlots::kMaxSlots; ++i) {
+        std::wstring text;
+        if (running_ && i < config_.cameraCount) {
+            int count = engine_.GetConnectedClientCount(i);
+            if (count > 0) {
+                text = L"●" + std::to_wstring(count); // "●N"
+            }
+        }
+        SetDlgItemTextW(hDlg_, IDC_ROWSTATUS_BASE + i, text.c_str());
+    }
 }
 
 void MainDialog::SaveConfig() {

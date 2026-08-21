@@ -25,7 +25,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     } else {
         INITCOMMONCONTROLSEX icc{ sizeof(icc), ICC_STANDARD_CLASSES | ICC_BAR_CLASSES };
         InitCommonControlsEx(&icc);
-        exitCode = MainDialog::RunModal(hInstance);
+        exitCode = MainDialog::RunModal(hInstance, mode == L"-autostart");
     }
 
     CoUninitialize();

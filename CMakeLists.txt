@@ -69,17 +69,27 @@ set(CAMTEST_SOURCES
     src/AppConfig.cpp
     src/VCamSlots.cpp
     src/Gui/MainDialog.cpp
+    src/Gui/CameraSettingsDialog.cpp
     src/Engine/VCamEngine.cpp
     src/Ipc/NamedPipeServer.cpp
+    # Reused for the GUI's row thumbnails -- static preview decode only
+    # (first frame, no Rgb24Convert), NOT the camtest_filter.dll instance
+    # that consumers CoCreateInstance -- see the EXE/DLL split note in
+    # CMakeLists' camtest_filter section. Same source, two separate
+    # binaries; nothing is shared at runtime.
+    src/Imaging/ImageLoader.cpp
+    src/Imaging/Letterbox.cpp
     resources/camtest.rc
 )
 
 add_executable(camtest WIN32 ${CAMTEST_SOURCES})
+target_compile_definitions(camtest PRIVATE NOMINMAX)
 # The .rc file embeds its own manifest (resource ID 1); disable the linker's
 # default auto-generated manifest to avoid a duplicate RT_MANIFEST resource.
 target_link_options(camtest PRIVATE "/MANIFEST:NO")
 target_link_libraries(camtest PRIVATE
     strmiids
+    windowscodecs
     ole32
     oleaut32
     uuid

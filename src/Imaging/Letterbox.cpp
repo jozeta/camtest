@@ -1,5 +1,4 @@
 #include "Letterbox.h"
-#include "FrameBuffer.h"
 #include <wincodec.h>
 #include <wrl/client.h>
 #include <algorithm>
@@ -10,9 +9,7 @@ using Microsoft::WRL::ComPtr;
 namespace Letterbox {
 
 bool ComposeCanvas(const std::vector<uint8_t>& srcBGRA, UINT srcW, UINT srcH,
-                    std::vector<uint8_t>& outCanvasBGRA) {
-    const UINT canvasW = FrameBuffer::kWidth;
-    const UINT canvasH = FrameBuffer::kHeight;
+                    UINT canvasW, UINT canvasH, std::vector<uint8_t>& outCanvasBGRA) {
     const UINT canvasStride = canvasW * 4;
 
     outCanvasBGRA.assign(size_t(canvasStride) * canvasH, 0);
