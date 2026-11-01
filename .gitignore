@@ -24,3 +24,16 @@ cmake_install.cmake
 *.ninja
 .ninja_log
 .ninja_deps
+
+# --- Baseline: macOS, Claude Code and secrets ---
+.DS_Store
+._*
+.claude/settings.local.json
+.remember/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
