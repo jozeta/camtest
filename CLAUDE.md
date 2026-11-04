@@ -48,3 +48,8 @@ Shared code: `src/Imaging/` (image/GIF loading, letterbox, RGB24 conversion), `s
 - Consumers query formats/resolution before the pipe connects, so the DLL must answer from
   registry/config without the GUI running.
 - Any change to the pipe protocol needs both sides updated together.
+
+## App standards
+
+This repo follows the app standards in `~/Desktop/code/tools/standards/STANDARDS.md` (rule IDs,
+severities; decisions and waivers in `.claude-standards`). `claude-check --repo .` checks it.
